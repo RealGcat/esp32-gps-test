@@ -1,0 +1,21 @@
+# Build artifacts
+build/
+.pio/
+
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+
+# IDE directories
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Editor backups
+*~
+*.swp
