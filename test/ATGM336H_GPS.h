@@ -17,15 +17,15 @@
 // 定义的GPS信息结构体类型，用来存储接收的模组定位信息
 struct GPS_BDS_DATA
 {
-	char GPS_Buffer[80];
-	bool isGetData;		    //是否获取到GPS数据
-	bool isParseData;	    //是否解析完成
-	char UTCTime[11];		  //UTC时间
-	char latitude[11];		//纬度
-	char N_S[2];		      //N/S
-	char longitude[12];		//经度
-	char E_W[2];		      //E/W
-	bool isUsefull;		    //定位信息是否有效
+    char GPS_Buffer[80];
+    bool isGetData;            //是否获取到GPS数据
+    bool isParseData;        //是否解析完成
+    char UTCTime[11];          //UTC时间
+    char latitude[11];        //纬度
+    char N_S[2];              //N/S
+    char longitude[12];        //经度
+    char E_W[2];              //E/W
+    bool isUsefull;            //定位信息是否有效
 } Save_Data;
 
 const unsigned int gpsRxBufferLength = 600;
@@ -34,89 +34,138 @@ unsigned int ii = 0;
 
 void GPS_BDS_Init()
 {
-	GPS_BDS_Serial.begin(9600);			// 模块的波特率决定
+    GPS_BDS_Serial.begin(9600);            // 模块的波特率决定
   Save_Data.isGetData = false;
-	Save_Data.isParseData = false;
-	Save_Data.isUsefull = false;
+    Save_Data.isParseData = false;
+    Save_Data.isUsefull = false;
 }
 
 void clrGpsRxBuffer(void)
 {
-	memset(gpsRxBuffer, 0, gpsRxBufferLength);      //清空
-	ii = 0;
+    memset(gpsRxBuffer, 0, gpsRxBufferLength);      //清空
+    ii = 0;
 }
 
 // 然后根据$GNRMC 格式的定义，将其中的：定位状态、经纬度、东西半球、南北半球信息提取出来。
 void parseGpsBuffer()
 {
-	char *subString;
-	char *subStringNext;
-	if (Save_Data.isGetData)
-	{
-		Save_Data.isGetData = false;
+    char *subString;
+    char *subStringNext;
+    if (Save_Data.isGetData)
+    {
+        Save_Data.isGetData = false;
+        Save_Data.isParseData = false;
+        Save_Data.isUsefull = false;
 
-		for (int i = 0 ; i <= 6 ; i++)
-		{
-			if (i == 0)
-			{
-				if ((subString = strstr(Save_Data.GPS_Buffer, ",")) == NULL)
+        memset(Save_Data.UTCTime, 0, sizeof(Save_Data.UTCTime));
+        memset(Save_Data.latitude, 0, sizeof(Save_Data.latitude));
+        memset(Save_Data.N_S, 0, sizeof(Save_Data.N_S));
+        memset(Save_Data.longitude, 0, sizeof(Save_Data.longitude));
+        memset(Save_Data.E_W, 0, sizeof(Save_Data.E_W));
+
+        for (int i = 0 ; i <= 6 ; i++)
         {
-					// return; //解析错误
+            if (i == 0)
+            {
+                if ((subString = strstr(Save_Data.GPS_Buffer, ",")) == NULL)
+        {
+                    // return; //解析错误
         }
-			}
-			else
-			{
-				subString++;
-				if ((subStringNext = strstr(subString, ",")) != NULL)
-				{
-					char usefullBuffer[2]; 
-					switch(i)
-					{
-						case 1:memcpy(Save_Data.UTCTime, subString, subStringNext - subString);break;	//获取UTC时间
-						case 2:memcpy(usefullBuffer, subString, subStringNext - subString);break;	//获取UTC时间
-						case 3:memcpy(Save_Data.latitude, subString, subStringNext - subString);break;	//获取纬度信息
-						case 4:memcpy(Save_Data.N_S, subString, subStringNext - subString);break;	//获取N/S
-						case 5:memcpy(Save_Data.longitude, subString, subStringNext - subString);break;	//获取纬度信息
-						case 6:memcpy(Save_Data.E_W, subString, subStringNext - subString);break;	//获取E/W
+            }
+            else
+            {
+                subString++;
+                if ((subStringNext = strstr(subString, ",")) != NULL)
+                {
+                    size_t fieldLength = subStringNext - subString;
 
-						default:break;
-					}
+                    switch(i)
+                    {
+                        case 1:
+                        {
+                            size_t copyLen = fieldLength < (sizeof(Save_Data.UTCTime) - 1) ? fieldLength : (sizeof(Save_Data.UTCTime) - 1);
+                            memcpy(Save_Data.UTCTime, subString, copyLen);
+                            Save_Data.UTCTime[copyLen] = '\0';
+                            break;
+                        }
+                        case 2:
+                        {
+                            if (fieldLength > 0)
+                            {
+                                char statusChar = subString[0];
+                                if (statusChar >= 'a' && statusChar <= 'z')
+                                    statusChar -= ('a' - 'A');
 
-					subString = subStringNext;
-					Save_Data.isParseData = true;
-					if(usefullBuffer[0] == 'A')
-						Save_Data.isUsefull = true;
-					else if(usefullBuffer[0] == 'V')
-						Save_Data.isUsefull = false;
-				}
-				else
-				{
-					// return;	//解析错误
-				}
-			}
-		}
-	}
+                                if(statusChar == 'A')
+                                    Save_Data.isUsefull = true;
+                                else if(statusChar == 'V')
+                                    Save_Data.isUsefull = false;
+                            }
+                            break;
+                        }
+                        case 3:
+                        {
+                            size_t copyLen = fieldLength < (sizeof(Save_Data.latitude) - 1) ? fieldLength : (sizeof(Save_Data.latitude) - 1);
+                            memcpy(Save_Data.latitude, subString, copyLen);
+                            Save_Data.latitude[copyLen] = '\0';
+                            break;
+                        }
+                        case 4:
+                        {
+                            size_t copyLen = fieldLength < (sizeof(Save_Data.N_S) - 1) ? fieldLength : (sizeof(Save_Data.N_S) - 1);
+                            memcpy(Save_Data.N_S, subString, copyLen);
+                            Save_Data.N_S[copyLen] = '\0';
+                            break;
+                        }
+                        case 5:
+                        {
+                            size_t copyLen = fieldLength < (sizeof(Save_Data.longitude) - 1) ? fieldLength : (sizeof(Save_Data.longitude) - 1);
+                            memcpy(Save_Data.longitude, subString, copyLen);
+                            Save_Data.longitude[copyLen] = '\0';
+                            break;
+                        }
+                        case 6:
+                        {
+                            size_t copyLen = fieldLength < (sizeof(Save_Data.E_W) - 1) ? fieldLength : (sizeof(Save_Data.E_W) - 1);
+                            memcpy(Save_Data.E_W, subString, copyLen);
+                            Save_Data.E_W[copyLen] = '\0';
+                            break;
+                        }
+
+                        default:break;
+                    }
+
+                    subString = subStringNext;
+                    Save_Data.isParseData = true;
+                }
+                else
+                {
+                    // return;    //解析错误
+                }
+            }
+        }
+    }
 }
 
 // 通过串口读取 定位模组输出的定位信息，并根据帧头作为判断条件，只保存 $GNRMC 格式的数据帧
 void gpsRead() {
-	while (GPS_BDS_Serial.available())
-	{
-		gpsRxBuffer[ii++] = GPS_BDS_Serial.read();
-		if (ii == gpsRxBufferLength)
+    while (GPS_BDS_Serial.available())
+    {
+        gpsRxBuffer[ii++] = GPS_BDS_Serial.read();
+        if (ii == gpsRxBufferLength)
       clrGpsRxBuffer();
-	}
+    }
 
-	char* GPS_BufferHead;
-	char* GPS_BufferTail;
-	if ((GPS_BufferHead = strstr(gpsRxBuffer, "$GPRMC,")) != NULL || (GPS_BufferHead = strstr(gpsRxBuffer, "$GNRMC,")) != NULL )
-	{
-		if (((GPS_BufferTail = strstr(GPS_BufferHead, "\r\n")) != NULL) && (GPS_BufferTail > GPS_BufferHead))
-		{
-			memcpy(Save_Data.GPS_Buffer, GPS_BufferHead, GPS_BufferTail - GPS_BufferHead);
-			Save_Data.isGetData = true;
+    char* GPS_BufferHead;
+    char* GPS_BufferTail;
+    if ((GPS_BufferHead = strstr(gpsRxBuffer, "$GPRMC,")) != NULL || (GPS_BufferHead = strstr(gpsRxBuffer, "$GNRMC,")) != NULL )
+    {
+        if (((GPS_BufferTail = strstr(GPS_BufferHead, "\r\n")) != NULL) && (GPS_BufferTail > GPS_BufferHead))
+        {
+            memcpy(Save_Data.GPS_Buffer, GPS_BufferHead, GPS_BufferTail - GPS_BufferHead);
+            Save_Data.isGetData = true;
 
-			clrGpsRxBuffer();
-		}
-	}
+            clrGpsRxBuffer();
+        }
+    }
 }

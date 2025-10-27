@@ -1,0 +1,23 @@
+# Build artifacts
+*.o
+*.obj
+*.elf
+*.hex
+*.eep
+
+# Build directories
+build/
+dist/
+out/
+bin/
+
+# PlatformIO
+.pio/
+
+# Editor and OS generated files
+*.swp
+*.swo
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
