@@ -137,13 +137,13 @@ void loop() {
             {
                 // 打印经纬度信息 东西、南北半球信息
                 u8g2.setCursor(0, 24);
-                u8g2.print("latitude = ");     
+                u8g2.print("纬度 = ");     
                 u8g2.println(Save_Data.latitude);
                 u8g2.setCursor(0, 36);
                 u8g2.print("N_S = ");
                 u8g2.println(Save_Data.N_S);
                 u8g2.setCursor(0, 48);
-                u8g2.print("longitude = ");
+                u8g2.print("经度 = ");
                 u8g2.println(Save_Data.longitude);
                 u8g2.setCursor(0, 60);
                 u8g2.print("E_W = ");
@@ -164,3 +164,4 @@ void loop() {
         // 如果数据没有变化，则跳过所有显示更新操作
     }
 }
+
