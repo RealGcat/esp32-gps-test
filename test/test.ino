@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <stdio.h>
 #include <U8g2lib.h>
 #include "ATGM336H_GPS.h"
  
@@ -89,6 +90,54 @@ bool convertUTCToBeijingTime(const char* utcTime, char* output, size_t outputSiz
   return true;
 }
 
+bool convertCoordinateToDMS(const char* coordinate, char hemisphere, char* output, size_t outputSize) {
+  if (coordinate == NULL || output == NULL || outputSize < 16) {
+    return false;
+  }
+
+  if (coordinate[0] == '\0') {
+    output[0] = '\0';
+    return false;
+  }
+
+  double rawValue = atof(coordinate);
+  if (rawValue < 0.0) {
+    rawValue = -rawValue;
+  }
+
+  int degrees = rawValue / 100.0;
+  double minutesFull = rawValue - degrees * 100.0;
+
+  int minutes = minutesFull;
+  double seconds = (minutesFull - minutes) * 60.0;
+
+  if (seconds >= 59.995) {
+    seconds = 0.0;
+    minutes += 1;
+    if (minutes >= 60) {
+      minutes = 0;
+      degrees += 1;
+    }
+  }
+
+  char hemisphereChar = hemisphere;
+  if (hemisphereChar >= 'a' && hemisphereChar <= 'z') {
+    hemisphereChar -= ('a' - 'A');
+  }
+  if (hemisphereChar != 'N' && hemisphereChar != 'S' &&
+      hemisphereChar != 'E' && hemisphereChar != 'W') {
+    hemisphereChar = ' ';
+  }
+
+  int written = snprintf(output, outputSize, "%d°%02d'%05.2f\"%c", degrees, minutes, seconds, hemisphereChar);
+  if (written < 0 || (size_t)written >= outputSize) {
+    output[0] = '\0';
+    return false;
+  }
+
+  return true;
+}
+ 
 void setup() {
   Serial.begin(115200);
   
@@ -136,15 +185,36 @@ void loop() {
             if(Save_Data.isUsefull)
             {
                 // 打印经纬度信息 东西、南北半球信息
+                char latitudeDMS[24];
+                char longitudeDMS[24];
+                bool hasLatitudeDMS = convertCoordinateToDMS(Save_Data.latitude, Save_Data.N_S[0], latitudeDMS, sizeof(latitudeDMS));
+                bool hasLongitudeDMS = convertCoordinateToDMS(Save_Data.longitude, Save_Data.E_W[0], longitudeDMS, sizeof(longitudeDMS));
+
                 u8g2.setCursor(0, 24);
                 u8g2.print("纬度 = ");     
-                u8g2.println(Save_Data.latitude);
+                if (hasLatitudeDMS)
+                {
+                    u8g2.println(latitudeDMS);
+                }
+                else
+                {
+                    u8g2.println(Save_Data.latitude);
+                }
+
                 u8g2.setCursor(0, 36);
+                u8g2.print("经度 = ");
+                if (hasLongitudeDMS)
+                {
+                    u8g2.println(longitudeDMS);
+                }
+                else
+                {
+                    u8g2.println(Save_Data.longitude);
+                }
+
+                u8g2.setCursor(0, 48);
                 u8g2.print("N_S = ");
                 u8g2.println(Save_Data.N_S);
-                u8g2.setCursor(0, 48);
-                u8g2.print("经度 = ");
-                u8g2.println(Save_Data.longitude);
                 u8g2.setCursor(0, 60);
                 u8g2.print("E_W = ");
                 u8g2.println(Save_Data.E_W);
@@ -164,4 +234,4 @@ void loop() {
         // 如果数据没有变化，则跳过所有显示更新操作
     }
 }
-
+ 
