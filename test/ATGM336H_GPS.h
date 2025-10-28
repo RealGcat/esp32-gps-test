@@ -1,171 +1,230 @@
-/***********************************************************  
-  GPS、北斗(BDS)双模模块
-  通信接口：
-    VCC:5.0V  或 3.3V
-    GND:0V
-    RX: 串口接收接口
-    Tx: 串口发送接口
-
-    波特率：9600
-    定位精度：2.5m (开阔地)
-    首次定位时间：32s
-    串口输出协议： NMEA0183 ，参见《CASIC多模卫星导航接收机协议规范》
-
-***********************************************************/
-#define GPS_BDS_Serial  Serial2
-
-// 定义的GPS信息结构体类型，用来存储接收的模组定位信息
-struct GPS_BDS_DATA
-{
-    char GPS_Buffer[80];
-    bool isGetData;            //是否获取到GPS数据
-    bool isParseData;        //是否解析完成
-    char UTCTime[11];          //UTC时间
-    char latitude[11];        //纬度
-    char N_S[2];              //N/S
-    char longitude[12];        //经度
-    char E_W[2];              //E/W
-    bool isUsefull;            //定位信息是否有效
-} Save_Data;
-
-const unsigned int gpsRxBufferLength = 600;
-char gpsRxBuffer[gpsRxBufferLength];
-unsigned int ii = 0;
-
-void GPS_BDS_Init()
-{
-    GPS_BDS_Serial.begin(9600);            // 模块的波特率决定
-  Save_Data.isGetData = false;
-    Save_Data.isParseData = false;
-    Save_Data.isUsefull = false;
+#include <Arduino.h>
+#include <stdio.h>
+#include <U8g2lib.h>
+#include "ATGM336H_GPS.h"
+ 
+#ifdef U8X8_HAVE_HW_SPI
+#include <SPI.h>
+#endif
+#ifdef U8X8_HAVE_HW_I2C
+#include <Wire.h>
+#endif
+ 
+U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, /* clock=*/ 22, /* data=*/ 21, /* reset=*/ U8X8_PIN_NONE);
+ 
+// 保存上一次显示的GPS数据，用于变化检测
+struct PreviousGPSDisplay {
+  char UTCTime[11];
+  char latitude[11];
+  char N_S[2];
+  char longitude[12];
+  char E_W[2];
+  bool isUsefull;
+  bool hasData;
+} prevDisplay;
+ 
+// 比较GPS数据是否发生变化
+bool isGPSDataChanged() {
+  if (!prevDisplay.hasData) {
+    return true;
+  }
+  
+  if (strcmp(prevDisplay.UTCTime, Save_Data.UTCTime) != 0) return true;
+  if (strcmp(prevDisplay.latitude, Save_Data.latitude) != 0) return true;
+  if (strcmp(prevDisplay.N_S, Save_Data.N_S) != 0) return true;
+  if (strcmp(prevDisplay.longitude, Save_Data.longitude) != 0) return true;
+  if (strcmp(prevDisplay.E_W, Save_Data.E_W) != 0) return true;
+  if (prevDisplay.isUsefull != Save_Data.isUsefull) return true;
+  
+  return false;
+}
+ 
+// 保存当前GPS数据到上一次显示状态
+void saveCurrentGPSData() {
+  strcpy(prevDisplay.UTCTime, Save_Data.UTCTime);
+  strcpy(prevDisplay.latitude, Save_Data.latitude);
+  strcpy(prevDisplay.N_S, Save_Data.N_S);
+  strcpy(prevDisplay.longitude, Save_Data.longitude);
+  strcpy(prevDisplay.E_W, Save_Data.E_W);
+  prevDisplay.isUsefull = Save_Data.isUsefull;
+  prevDisplay.hasData = true;
 }
 
-void clrGpsRxBuffer(void)
-{
-    memset(gpsRxBuffer, 0, gpsRxBufferLength);      //清空
-    ii = 0;
+bool convertUTCToBeijingTime(const char* utcTime, char* output, size_t outputSize) {
+  if (output == NULL || utcTime == NULL || outputSize < 9) {
+    return false;
+  }
+
+  for (int i = 0; i < 6; ++i) {
+    char c = utcTime[i];
+    if (c == '\0' || c < '0' || c > '9') {
+      return false;
+    }
+  }
+
+  int hour = (utcTime[0] - '0') * 10 + (utcTime[1] - '0');
+  int minute = (utcTime[2] - '0') * 10 + (utcTime[3] - '0');
+  int second = (utcTime[4] - '0') * 10 + (utcTime[5] - '0');
+
+  if (hour > 23 || minute > 59 || second > 59) {
+    return false;
+  }
+
+  int totalSeconds = hour * 3600 + minute * 60 + second;
+  totalSeconds = (totalSeconds + 8 * 3600) % (24 * 3600);
+
+  int beijingHour = totalSeconds / 3600;
+  int beijingMinute = (totalSeconds % 3600) / 60;
+  int beijingSecond = totalSeconds % 60;
+
+  output[0] = '0' + (beijingHour / 10);
+  output[1] = '0' + (beijingHour % 10);
+  output[2] = ':';
+  output[3] = '0' + (beijingMinute / 10);
+  output[4] = '0' + (beijingMinute % 10);
+  output[5] = ':';
+  output[6] = '0' + (beijingSecond / 10);
+  output[7] = '0' + (beijingSecond % 10);
+  output[8] = '\0';
+
+  return true;
 }
 
-// 然后根据$GNRMC 格式的定义，将其中的：定位状态、经纬度、东西半球、南北半球信息提取出来。
-void parseGpsBuffer()
-{
-    char *subString;
-    char *subStringNext;
-    if (Save_Data.isGetData)
+bool convertCoordinateToDMS(const char* coordinate, char hemisphere, char* output, size_t outputSize) {
+  if (coordinate == NULL || output == NULL || outputSize < 16) {
+    return false;
+  }
+
+  if (coordinate[0] == '\0') {
+    output[0] = '\0';
+    return false;
+  }
+
+  double rawValue = atof(coordinate);
+  if (rawValue < 0.0) {
+    rawValue = -rawValue;
+  }
+
+  int degrees = rawValue / 100.0;
+  double minutesFull = rawValue - degrees * 100.0;
+
+  int minutes = minutesFull;
+  double seconds = (minutesFull - minutes) * 60.0;
+
+  if (seconds >= 59.995) {
+    seconds = 0.0;
+    minutes += 1;
+    if (minutes >= 60) {
+      minutes = 0;
+      degrees += 1;
+    }
+  }
+
+  char hemisphereChar = hemisphere;
+  if (hemisphereChar >= 'a' && hemisphereChar <= 'z') {
+    hemisphereChar -= ('a' - 'A');
+  }
+  if (hemisphereChar != 'N' && hemisphereChar != 'S' &&
+      hemisphereChar != 'E' && hemisphereChar != 'W') {
+    hemisphereChar = ' ';
+  }
+
+  int written = snprintf(output, outputSize, "%d°%02d'%05.2f\"%c", degrees, minutes, seconds, hemisphereChar);
+  if (written < 0 || (size_t)written >= outputSize) {
+    output[0] = '\0';
+    return false;
+  }
+
+  return true;
+}
+ 
+void setup() {
+  Serial.begin(115200);
+  
+  u8g2.begin();
+  u8g2.enableUTF8Print();
+  
+  GPS_BDS_Init();
+  
+  // 初始化上一次显示状态
+  memset(&prevDisplay, 0, sizeof(prevDisplay));
+  prevDisplay.hasData = false;
+}
+ 
+void loop() {
+  gpsRead();    //获取GPS数据
+    parseGpsBuffer();//解析GPS数据
+ 
+  // 判断解析是否成功
+    if (Save_Data.isParseData)
     {
-        Save_Data.isGetData = false;
         Save_Data.isParseData = false;
-        Save_Data.isUsefull = false;
-
-        memset(Save_Data.UTCTime, 0, sizeof(Save_Data.UTCTime));
-        memset(Save_Data.latitude, 0, sizeof(Save_Data.latitude));
-        memset(Save_Data.N_S, 0, sizeof(Save_Data.N_S));
-        memset(Save_Data.longitude, 0, sizeof(Save_Data.longitude));
-        memset(Save_Data.E_W, 0, sizeof(Save_Data.E_W));
-
-        for (int i = 0 ; i <= 6 ; i++)
+        
+        // 检查GPS数据是否发生变化
+        if (isGPSDataChanged())
         {
-            if (i == 0)
+            // 数据有变化，需要更新显示
+            u8g2.clearBuffer();
+            u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+            u8g2.setFontDirection(0);
+            
+            // 世界标准时间，即格林威治时间，全球根据所在时区调整。
+            u8g2.setCursor(0, 12);
+            char beijingTime[9];
+            if (convertUTCToBeijingTime(Save_Data.UTCTime, beijingTime, sizeof(beijingTime)))
             {
-                if ((subString = strstr(Save_Data.GPS_Buffer, ",")) == NULL)
-        {
-                    // return; //解析错误
-        }
+                u8g2.print("北京时间=");
+                u8g2.println(beijingTime);
             }
             else
             {
-                subString++;
-                if ((subStringNext = strstr(subString, ",")) != NULL)
+                u8g2.print("UTC时间=");
+                u8g2.println(Save_Data.UTCTime);
+            }
+
+            if(Save_Data.isUsefull)
+            {
+                // 打印经纬度信息 东西、南北半球信息
+                char latitudeDMS[24];
+                char longitudeDMS[24];
+                bool hasLatitudeDMS = convertCoordinateToDMS(Save_Data.latitude, Save_Data.N_S[0], latitudeDMS, sizeof(latitudeDMS));
+                bool hasLongitudeDMS = convertCoordinateToDMS(Save_Data.longitude, Save_Data.E_W[0], longitudeDMS, sizeof(longitudeDMS));
+
+                u8g2.setCursor(0, 24);
+                u8g2.print("纬度 = ");     
+                if (hasLatitudeDMS)
                 {
-                    size_t fieldLength = subStringNext - subString;
-
-                    switch(i)
-                    {
-                        case 1:
-                        {
-                            size_t copyLen = fieldLength < (sizeof(Save_Data.UTCTime) - 1) ? fieldLength : (sizeof(Save_Data.UTCTime) - 1);
-                            memcpy(Save_Data.UTCTime, subString, copyLen);
-                            Save_Data.UTCTime[copyLen] = '\0';
-                            break;
-                        }
-                        case 2:
-                        {
-                            if (fieldLength > 0)
-                            {
-                                char statusChar = subString[0];
-                                if (statusChar >= 'a' && statusChar <= 'z')
-                                    statusChar -= ('a' - 'A');
-
-                                if(statusChar == 'A')
-                                    Save_Data.isUsefull = true;
-                                else if(statusChar == 'V')
-                                    Save_Data.isUsefull = false;
-                            }
-                            break;
-                        }
-                        case 3:
-                        {
-                            size_t copyLen = fieldLength < (sizeof(Save_Data.latitude) - 1) ? fieldLength : (sizeof(Save_Data.latitude) - 1);
-                            memcpy(Save_Data.latitude, subString, copyLen);
-                            Save_Data.latitude[copyLen] = '\0';
-                            break;
-                        }
-                        case 4:
-                        {
-                            size_t copyLen = fieldLength < (sizeof(Save_Data.N_S) - 1) ? fieldLength : (sizeof(Save_Data.N_S) - 1);
-                            memcpy(Save_Data.N_S, subString, copyLen);
-                            Save_Data.N_S[copyLen] = '\0';
-                            break;
-                        }
-                        case 5:
-                        {
-                            size_t copyLen = fieldLength < (sizeof(Save_Data.longitude) - 1) ? fieldLength : (sizeof(Save_Data.longitude) - 1);
-                            memcpy(Save_Data.longitude, subString, copyLen);
-                            Save_Data.longitude[copyLen] = '\0';
-                            break;
-                        }
-                        case 6:
-                        {
-                            size_t copyLen = fieldLength < (sizeof(Save_Data.E_W) - 1) ? fieldLength : (sizeof(Save_Data.E_W) - 1);
-                            memcpy(Save_Data.E_W, subString, copyLen);
-                            Save_Data.E_W[copyLen] = '\0';
-                            break;
-                        }
-
-                        default:break;
-                    }
-
-                    subString = subStringNext;
-                    Save_Data.isParseData = true;
+                    u8g2.println(latitudeDMS);
                 }
                 else
                 {
-                    // return;    //解析错误
+                    u8g2.println(Save_Data.latitude);
+                }
+
+                u8g2.setCursor(0, 36);
+                u8g2.print("经度 = ");
+                if (hasLongitudeDMS)
+                {
+                    u8g2.println(longitudeDMS);
+                }
+                else
+                {
+                    u8g2.println(Save_Data.longitude);
                 }
             }
+            else
+            {
+                u8g2.setCursor(0, 24);
+                u8g2.println("GPS DATA isn't usefull!");
+            }
+            
+            // 保存当前数据作为下一次比较的基准
+            saveCurrentGPSData();
+            
+            // 只在数据变化时才发送缓冲区到屏幕
+            u8g2.sendBuffer();
         }
+        // 如果数据没有变化，则跳过所有显示更新操作
     }
 }
-
-// 通过串口读取 定位模组输出的定位信息，并根据帧头作为判断条件，只保存 $GNRMC 格式的数据帧
-void gpsRead() {
-    while (GPS_BDS_Serial.available())
-    {
-        gpsRxBuffer[ii++] = GPS_BDS_Serial.read();
-        if (ii == gpsRxBufferLength)
-      clrGpsRxBuffer();
-    }
-
-    char* GPS_BufferHead;
-    char* GPS_BufferTail;
-    if ((GPS_BufferHead = strstr(gpsRxBuffer, "$GPRMC,")) != NULL || (GPS_BufferHead = strstr(gpsRxBuffer, "$GNRMC,")) != NULL )
-    {
-        if (((GPS_BufferTail = strstr(GPS_BufferHead, "\r\n")) != NULL) && (GPS_BufferTail > GPS_BufferHead))
-        {
-            memcpy(Save_Data.GPS_Buffer, GPS_BufferHead, GPS_BufferTail - GPS_BufferHead);
-            Save_Data.isGetData = true;
-
-            clrGpsRxBuffer();
-        }
-    }
-}
+ 
